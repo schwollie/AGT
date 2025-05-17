@@ -1,0 +1,6 @@
+# ruff config
+[tool.ruff]
+line-length = 88
+
+[tool.ruff.format]
+preview = true
