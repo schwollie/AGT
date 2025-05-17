@@ -87,20 +87,27 @@ class NormalFormGame:
         u = self.utility_matrix[tuple(self.A.T)]
         return (p[:, None] * u).sum(axis=0)
 
-    def a_is_dominated(self, a: int, i: int) -> bool:
+    def a_is_dominated(
+        self, a: int, i: int, excluded_a: np.ndarray = np.ndarray(0)
+    ) -> bool:
         """
         Check if action a of player i is strictly dominated by some mixed strategy.
+        Args:
+            a (int): The action to check.
+            i (int): The player index.
+            excluded_a (np.ndarray): (Actions for each player to exclude from the check. Defaults to an empty array. Has shape (e, 2) with ((player_id, excluded_action_id),...).
         Returns:
             bool: True if action a is strictly dominated, False otherwise.
         """
         num_actions = self.utility_matrix.shape[i]
-        other_players = [j for j in range(self.get_num_players()) if j != i]
 
-        # Generate all possible a_-i (actions of other players)
-        A_minus_i = np.meshgrid(
-            *[self.get_A_i(j) for j in other_players], indexing="ij"
-        )
-        A_minus_i = np.vstack([a.flatten() for a in A_minus_i]).T
+        # exclude actions, important for iterative domination
+        A_minus_i = self.A_except_i(i)
+        if excluded_a.size > 0:
+            for excl in excluded_a:
+                A_minus_i = A_minus_i[A_minus_i[:, excl[0]] != excl[1]]
+
+        A_minus_i = np.delete(A_minus_i, i, 1)
 
         # Variables: s_i(b_i) for each b_i in A_i, and epsilon
         # So total num_actions + 1 variables
@@ -116,27 +123,14 @@ class NormalFormGame:
             # For each b_i in A_i, build the action profile (b_i, a_-i)
             row = np.zeros(num_actions + 1)
             for b_i in range(num_actions):
-                # Build full action profile for utility lookup
-                action_profile = []
-                idx_other = 0
-                for j in range(self.get_num_players()):
-                    if j == i:
-                        action_profile.append(b_i)
-                    else:
-                        action_profile.append(a_minus_i[idx_other])
-                        idx_other += 1
+                action_profile = np.insert(a_minus_i, i, b_i)
                 row[b_i] = self.get_U(np.array(action_profile), i)
             row[-1] = -1  # -epsilon
+
             # Right-hand side: u_i(a_i, a_-i)
-            action_profile = []
-            idx_other = 0
-            for j in range(self.get_num_players()):
-                if j == i:
-                    action_profile.append(a)
-                else:
-                    action_profile.append(a_minus_i[idx_other])
-                    idx_other += 1
-            rhs = self.get_U(np.array(action_profile), i)
+            action_profile = np.insert(a_minus_i, i, a)
+            rhs = self.get_U(action_profile, i)
+
             # Constraint: sum_b s_i(b) * u_i(b, a_-i) - epsilon >= u_i(a, a_-i)
             # <=> sum_b s_i(b) * u_i(b, a_-i) - epsilon - u_i(a, a_-i) >= 0
             # <=> -sum_b s_i(b) * u_i(b, a_-i) + epsilon <= -u_i(a, a_-i)
@@ -166,3 +160,48 @@ class NormalFormGame:
             return True  # strictly dominated
         else:
             return False  # not strictly dominated
+
+    def get_iterative_dominated_actions(self) -> np.ndarray:
+        """
+        Get all dominated actions of the game by iteratively applying domination.
+        Returns:
+            np.ndarray: All dominated actions of the game.
+        """
+        dominated_actions = np.ndarray((0, 2), dtype=int)  # ((player_id, action_id))
+        undominated_actions = np.ndarray((0, 2), dtype=int)
+        for i in range(self.get_num_players()):
+            for a in self.get_A_i(i):
+                undominated_actions = np.append(undominated_actions, [[i, a]], axis=0)
+
+        last_size = undominated_actions.shape[0] + 1
+        while last_size > undominated_actions.shape[0]:
+            last_size = undominated_actions.shape[0]
+            to_remove = np.ndarray((0, 2), dtype=int)
+            for x in undominated_actions:
+                if self.a_is_dominated(x[1], x[0], dominated_actions):
+                    to_remove = np.append(to_remove, [x], axis=0)
+                    dominated_actions = np.append(dominated_actions, [x], axis=0)
+
+            # delete all to_remove from undominated_actions
+            if len(to_remove) > 0:
+                # Remove all rows in undominated_actions that are present in to_remove
+                mask = ~np.any(
+                    np.all(undominated_actions[:, None] == to_remove, axis=2), axis=1
+                )
+                undominated_actions = undominated_actions[mask]
+
+        return dominated_actions
+
+    def get_reasonable_actions(self) -> np.ndarray:
+        """
+        Get all reasonable actions of the game by iteratively applying domination.
+        Returns:
+            np.ndarray: All reasonable actions of the game.
+        """
+        dominated_actions = self.get_iterative_dominated_actions()
+        reasonable_actions = np.ndarray((0, 2), dtype=int)
+        for i in range(self.get_num_players()):
+            for a in self.get_A_i(i):
+                if not np.any(np.all(dominated_actions == [i, a], axis=1)):
+                    reasonable_actions = np.append(reasonable_actions, [[i, a]], axis=0)
+        return reasonable_actions

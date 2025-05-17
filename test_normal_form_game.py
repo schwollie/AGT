@@ -111,4 +111,26 @@ def test_a_is_dominated_2():
     game = NormalFormGame(matrix_2by2)
     assert game.a_is_dominated(2, 0)
     assert not game.a_is_dominated(0, 0)
-    assert not game.a_is_dominated(1, 0)
+    assert not game.a_is_dominated(1, 0, excluded_a=np.array([[0, 0]]))
+
+
+def test_it_dominated_reasonable_actions():
+    matrix_2by2 = np.array([[[3, 1], [0, 0]], [[0, 3], [3, 2]], [[1, 1], [1, 2]]])
+    game = NormalFormGame(matrix_2by2)
+    result = game.get_iterative_dominated_actions()
+
+    np.testing.assert_array_equal(result[0], np.array([0, 2]))
+    np.testing.assert_array_equal(result[1], np.array([1, 1]))
+    np.testing.assert_array_equal(result[2], np.array([0, 1]))
+
+    # check reasonable actions, which are not dominated
+    reasonable = game.get_reasonable_actions()
+    np.testing.assert_array_equal(reasonable[0], np.array([0, 0]))
+    np.testing.assert_array_equal(reasonable[1], np.array([1, 0]))
+
+
+def test_it_dominated_actions2():
+    matrix_2by2 = np.array([[[1, 3], [1, 0]], [[0, 0], [2, 1]], [[3, 1], [0, 3]]])
+    game = NormalFormGame(matrix_2by2)
+    result = game.get_iterative_dominated_actions()
+    print(result)
