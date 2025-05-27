@@ -134,3 +134,55 @@ def test_it_dominated_actions2():
     game = NormalFormGame(matrix_2by2)
     result = game.get_iterative_dominated_actions()
     print(result)
+
+
+def test_maxmin():
+    matrix_2by2 = np.array([[[2, 1], [0, 0]], [[0, 0], [1, 2]]])
+    game = NormalFormGame(matrix_2by2)
+    maxmin0 = game.maximin(0)
+    maxmin1 = game.maximin(1)
+
+    # check if the maxmin is correct
+    np.testing.assert_array_equal(maxmin0[1], np.array([1 / 3, 2 / 3]))
+    np.testing.assert_array_equal(maxmin1[1], np.array([2 / 3, 1 / 3]))
+
+
+def test_maxmin2():
+    # R=0, P=1, S=2, L=3 (Indices for Rock, Paper, Scissors, Lava)
+    # Player 1 is the row player, Player 2 is the column player.
+    # Payoffs are (Player 1's utility, Player 2's utility).
+    # Win = +1, Lose = -1, Draw = 0.
+    # Standard Rock-Paper-Scissors rules apply.
+    # Lava beats Rock, Paper, and Scissors. Lava vs Lava is a draw.
+
+    rpsl_matrix = np.array(
+        [
+            # Opponent (Player 2) plays:
+            # Rock    Paper     Scissors  Lava
+            [(0, 0), (-1, 1), (1, -1), (-1, 1)],  # Player 1 plays Rock
+            [(1, -1), (0, 0), (-1, 1), (-1, 1)],  # Player 1 plays Paper
+            [(-1, 1), (1, -1), (0, 0), (-1, 1)],  # Player 1 plays Scissors
+            [(1, -1), (1, -1), (1, -1), (0, 0)],  # Player 1 plays Lava
+        ]
+    )
+
+    game = NormalFormGame(rpsl_matrix)
+
+    # Calculate maximin for Player 0 (Player 1 in description)
+    maxmin0_value, maxmin0_strategy = game.maximin(0)
+
+    # Calculate maximin for Player 1 (Player 2 in description)
+    maxmin1_value, maxmin1_strategy = game.maximin(1)
+
+    # For this game, the maximin strategy for both players is to play Lava.
+    # This guarantees a minimum payoff of 0.
+    # The strategy vector [P(Rock), P(Paper), P(Scissors), P(Lava)]
+    # will be [0, 0, 0, 1].
+    expected_maximin_value = 0.0
+    expected_strategy = np.array([0.0, 0.0, 0.0, 1.0])
+
+    np.testing.assert_allclose(maxmin0_value, expected_maximin_value, atol=1e-7)
+    np.testing.assert_allclose(maxmin0_strategy, expected_strategy, atol=1e-7)
+
+    np.testing.assert_allclose(maxmin1_value, expected_maximin_value, atol=1e-7)
+    np.testing.assert_allclose(maxmin1_strategy, expected_strategy, atol=1e-7)

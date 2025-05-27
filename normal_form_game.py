@@ -1,3 +1,6 @@
+from itertools import product
+from typing import Tuple
+
 import numpy as np
 from scipy.optimize import linprog
 
@@ -205,3 +208,121 @@ class NormalFormGame:
                 if not np.any(np.all(dominated_actions == [i, a], axis=1)):
                     reasonable_actions = np.append(reasonable_actions, [[i, a]], axis=0)
         return reasonable_actions
+
+    def maximin(self, i: int) -> Tuple[float, np.ndarray]:
+        """
+        Calculate maximin strategy for the game for player i
+        Args:
+            i (int): The player index.
+        Returns:
+            Tuple[float, np.ndarray]: The security level and one maximin strategy for player i as an array of propabilities for the actions of player i
+        """
+        num_players = self.get_num_players()
+        player_i_num_actions = self.utility_matrix.shape[i]
+
+        # LP variables: s_i(0), ..., s_i(player_i_num_actions-1), U*_i
+        # Total variables: player_i_num_actions + 1
+        # Objective: Maximize U*_i, which is equivalent to minimizing -U*_i
+        # c is the coefficient vector for the objective function.
+        c = np.zeros(player_i_num_actions + 1)
+        c[-1] = -1  # Coefficient for U*_i (we minimize -U*_i)
+
+        # Inequality constraints (A_ub * x <= b_ub):
+        # sum_{b_k} s_i(b_k) * u_i(b_k, a_-i) >= U*_i  for all a_-i
+        # This is rewritten as: U*_i - sum_{b_k} s_i(b_k) * u_i(b_k, a_-i) <= 0
+        A_ub_list = []
+        b_ub_list = []  # All RHS for these constraints will be 0
+
+        # Determine opponent action profiles (a_-i)
+        opponent_action_sets = []
+        original_opponent_indices = (
+            []
+        )  # To map product indices to original player indices
+        for p_idx in range(num_players):
+            if p_idx != i:
+                opponent_action_sets.append(self.get_A_i(p_idx))
+                original_opponent_indices.append(p_idx)
+
+        if (
+            not opponent_action_sets
+        ):  # This is a single-player game (player i is the only player)
+            # Constraint becomes: sum_{b_k} s_i(b_k) * u_i(b_k) >= U*_i
+            # (where u_i(b_k) is utility of player i for their own action b_k)
+            # Rewritten: U*_i - sum_{b_k} s_i(b_k) * u_i(b_k) <= 0
+            row = np.zeros(player_i_num_actions + 1)
+            for k_action_idx in range(player_i_num_actions):
+                # Construct action profile for player i (only player)
+                action_profile = np.array([k_action_idx], dtype=int)
+                utility_val = self.get_U(action_profile, i)
+                row[k_action_idx] = -utility_val  # Coefficient for s_i(k_action_idx)
+            row[-1] = 1  # Coefficient for U*_i
+            A_ub_list.append(row)
+            b_ub_list.append(0)
+        else:  # Multi-player game
+            # Iterate over all combinations of opponents' actions (a_-i)
+            for opponent_actions_tuple in product(*opponent_action_sets):
+                row = np.zeros(player_i_num_actions + 1)
+                current_full_profile = np.zeros(num_players, dtype=int)
+
+                # Populate opponent actions in the full profile
+                for opponent_tuple_idx, original_p_idx in enumerate(
+                    original_opponent_indices
+                ):
+                    current_full_profile[original_p_idx] = opponent_actions_tuple[
+                        opponent_tuple_idx
+                    ]
+
+                # For each action b_k of player i, get u_i(b_k, a_-i)
+                for k_action_idx in range(player_i_num_actions):
+                    current_full_profile[i] = k_action_idx  # Set player i's action
+                    utility_val = self.get_U(current_full_profile, i)
+                    row[k_action_idx] = (
+                        -utility_val
+                    )  # Coefficient for s_i(k_action_idx)
+
+                row[-1] = 1  # Coefficient for U*_i
+                A_ub_list.append(row)
+                b_ub_list.append(0)
+
+        A_ub = (
+            np.array(A_ub_list) if A_ub_list else None
+        )  # Handle case with no inequality constraints if necessary (should not happen here)
+        b_ub = np.array(b_ub_list) if b_ub_list else None
+
+        # Equality constraints (A_eq * x == b_eq):
+        # sum_{b_k} s_i(b_k) = 1
+        A_eq = np.zeros((1, player_i_num_actions + 1))
+        A_eq[0, :player_i_num_actions] = 1  # Coefficients for s_i(b_k) are 1
+        b_eq = np.array([1])  # RHS is 1
+
+        # Bounds for variables:
+        # 0 <= s_i(b_k) <= 1 for probabilities
+        # U*_i is unbounded (None, None)
+        bounds = [(0, 1)] * player_i_num_actions + [(None, None)]
+
+        # Solve the linear program
+        res = linprog(
+            c, A_ub=A_ub, b_ub=b_ub, A_eq=A_eq, b_eq=b_eq, bounds=bounds, method="highs"
+        )
+
+        if res.success:
+            maximin_strategy_player_i = res.x[:player_i_num_actions]
+            # Security level U*_i is the value of the objective function.
+            # Since we minimized -U*_i, the optimal value res.fun = -U*_i.
+            # So, U*_i = -res.fun. Alternatively, U*_i is the last variable in res.x.
+            security_level = res.x[-1]  # Or -res.fun, should be equivalent
+
+            # Ensure probabilities are non-negative and sum to 1 (due to potential floating point issues)
+            maximin_strategy_player_i = np.maximum(
+                0, maximin_strategy_player_i
+            )  # clamp to 0
+            maximin_strategy_player_i /= np.sum(
+                maximin_strategy_player_i
+            )  # re-normalize
+
+            return security_level, maximin_strategy_player_i
+        else:
+            # This should ideally not happen for well-posed maximin problems.
+            raise ValueError(
+                f"Linear program for maximin strategy for player {i} did not solve: {res.message}"
+            )
